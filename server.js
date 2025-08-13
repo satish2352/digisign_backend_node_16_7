@@ -1,8 +1,30 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const xml2js = require('xml2js');
+
+const mysql = require('mysql2');
+
+const db = mysql.createConnection({
+  host: 'localhost',      // Your DB host
+  user: 'root',           // Your DB username
+  password: 'asd123!@#$.~;-',   // Your DB password
+  database: 'digisign' // Your DB name
+});
+
+db.connect(err => {
+  if (err) {
+    console.error('❌ MySQL connection failed:', err);
+  } else {
+    console.log('✅ Connected to MySQL database');
+  }
+});
+
+
+
+
+
 const app = express();
-const PORT = 3000;
+const PORT = 8000;
 
 // Middleware for parsing body
 app.use(bodyParser.text({ type: ['application/xml', 'text/xml', 'text/plain'] }));
@@ -16,7 +38,7 @@ let latestResponse = {
 };
 
 // 1️⃣ POST endpoint to receive response (JSON / XML / Text)
-app.post('/response-handler', async (req, res) => {
+app.post('/response-handler-verify', async (req, res) => {
   try {
     const contentType = req.headers['content-type'] || 'text/plain';
     latestResponse.contentType = contentType;
@@ -40,8 +62,50 @@ app.post('/response-handler', async (req, res) => {
   }
 });
 
+
+app.post('/response-handler', async (req, res) => {
+  try {
+    const contentType = req.headers['content-type'] || 'application/xml';
+    latestResponse.contentType = contentType;
+    latestResponse.raw = req.body;
+    latestResponse.parsed = null;
+
+    if (contentType.includes('application/xml') || contentType.includes('text/xml')) {
+      const parser = new xml2js.Parser({ explicitArray: false });
+      latestResponse.parsed = await parser.parseStringPromise(req.body);
+    }
+
+    console.log('✅ Received server response:', latestResponse);
+
+    // Store into MySQL
+    const sql = `INSERT INTO responses (content_type, raw_content, parsed_content) VALUES (?, ?, ?)`;
+    db.query(
+      sql,
+      [
+        latestResponse.contentType,
+        latestResponse.raw,
+        JSON.stringify(latestResponse.parsed) // store parsed JSON as string
+      ],
+      (err, result) => {
+        if (err) {
+          console.error('❌ Error inserting into MySQL:', err);
+          return res.status(500).send('❌ Failed to save to database');
+        }
+        console.log('✅ Data inserted into MySQL, ID:', result.insertId);
+        res.status(200).send('✅ Response received, parsed & stored successfully');
+      }
+    );
+
+  } catch (err) {
+    console.error('❌ Error parsing response:', err);
+    res.status(500).send('❌ Failed to parse server response');
+  }
+});
+
+
+
 // 2️⃣ GET endpoint to show parsed result
-// Works for: /response-handler  AND  /response-handler/<txnref>
+
 app.get('/response-handler/:txnref', (req, res) => {
   const txnref = req.params.txnref || null;
   let decodedTxnref = '';
